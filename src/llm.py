@@ -32,7 +32,7 @@ class LLM:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         model_load_config = llm_config['model_load_config']
         self.translation_prompts = llm_config['translation_prompts']
-        self.generation_params = llm_config['generation_params']
+        #self.generation_params = llm_config['generation_params']
 
         if model_load_config['load_in_4bit']:
             self.model = transformers.AutoModelForCausalLM.from_pretrained(
@@ -64,7 +64,8 @@ class LLM:
 
     def generate(
         self, 
-        input_string: str
+        input_string: str,
+        **kwargs
     ) -> str:
         """
         Generates a natural language output, given an input string.
@@ -74,7 +75,8 @@ class LLM:
             sample = self.model.generate(
             #sample = model.generate(
                 input_ids=input_ids,
-                **self.generation_params
+                **kwargs
+                #**self.generation_params
                 #streamer=streamer
             )
         except Exception as e:

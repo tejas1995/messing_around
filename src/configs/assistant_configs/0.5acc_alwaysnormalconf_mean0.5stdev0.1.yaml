@@ -1,0 +1,15 @@
+assistant_name: "0.5acc_alwaysnormalconf_mean0.5stdev0.1"
+assistant_correctness:
+  distribution_name: "bernoulli"
+  params:
+    p: 0.5
+confidence_when_correct:
+  distribution_name: "normal"
+  params:
+    mean: 0.5
+    stdev: 0.1
+confidence_when_incorrect:
+  distribution_name: "normal"
+  params:
+    mean: 0.5
+    stdev: 0.1
