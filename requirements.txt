@@ -1,0 +1,11 @@
+flask
+ruamel.yaml
+accelerate
+peft
+bitsandbytes
+nltk
+wandb
+jsonlines
+ipykernel
+tenacity
+datasets

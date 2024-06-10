@@ -2,4 +2,10 @@ llm_config_path: "configs/llm_configs/llama2_7b.yaml"
 generation_params:
   num_beams: 5
   max_new_tokens: 5
-  length_penalty: -1.0
+  #length_penalty: -1.0
+instruction_prompts: 
+  1stage_game: "You are trying to answer a question. You also have an AI assistant to help you answer this question. The AI assistant is not always confident in its answers. You have to answer the question based on your own knowledge, as well as the AI assistant's suggestion and confidence. \n\nQuestion: QUESTION \nChoices: CHOICES\n\nAI assistant's answer: ASSISTANT_PREDICTION \nAI assistant's confidence: ASSISTANT_CONFIDENCE \n\nDo you wish to rely on the assistant's answer? Answer either yes or no.\n\nAnswer:"
+  1stage_game: "You are trying to answer a question. You also have an AI assistant to help you answer this question. The AI assistant is not always confident in its answers, but typically is correct ASSISTANT_ACCURACY percent of the time. You have to answer the question based on your own knowledge, as well as the AI assistant's suggestion and confidence. \n\nQuestion: QUESTION \nChoices: CHOICES\n\nAI assistant's answer: ASSISTANT_PREDICTION \nAI assistant's confidence: ASSISTANT_CONFIDENCE \n\nDo you wish to rely on the assistant's answer? Answer either yes or no.\n\nAnswer:"
+  2stage_game: 
+    initial_guess: "You are trying to answer a question. You have to answer the question based on your own knowledge. \n\nQuestion: QUESTION \nChoices: CHOICES \n What is your final answer (A, B, C or D)?\nAnswer:"
+    final_decision: "You are trying to answer a question. You also have an AI assistant to help you answer this question. The AI assistant is not always confident in its answers. You have to answer the question based on your own knowledge, as well as the AI assistant's suggestion and confidence. \n\nQuestion: QUESTION \nChoices: CHOICES\n\nYour initial answer: INITIAL_DECISION \n\n AI assistant's answer: ASSISTANT_PREDICTION \nAI assistant's confidence: ASSISTANT_CONFIDENCE \n\nWhat is your final answer (A, B, C or D)?\n\nAnswer:"

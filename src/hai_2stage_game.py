@@ -9,11 +9,12 @@ import logging
 import argparse
 from tqdm import tqdm
 
-import scipy
 import numpy as np
 import datasets
 
 from llm import LLM
+import torch
+from transformers import LogitsProcessor, LogitsProcessorList
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -22,6 +23,20 @@ logging.basicConfig(
         level=logging.INFO)
 
 CHOICE_LETTERS = ['A', 'B', 'C', 'D']
+
+
+# Define a custom LogitsProcessor
+class OnlyABCDLogitsProcessor(LogitsProcessor):
+    def __init__(self, tokenizer):
+        self.valid_token_ids = [
+            tokenizer.convert_tokens_to_ids(c) for c in CHOICE_LETTERS
+        ]
+
+    def __call__(self, input_ids, scores):
+        mask = torch.ones_like(scores) * float('-inf')
+        for valid_token_id in self.valid_token_ids:
+            mask[:, valid_token_id] = scores[:, valid_token_id]
+        return mask
 
 def calculate_flip_rate(results: List[Dict]) -> float:
     instances_where_assistant_and_user_initial_guess_differ = [r for r in results if not r['initial_guesses_match']]
@@ -134,10 +149,16 @@ class User:
     def __init__(self, user_config: Dict) -> None:
         llm_config = yaml.safe_load(open(user_config['llm_config_path']))
         self.llm = LLM(llm_config=llm_config)
+        #pdb.set_trace()
         self.name = llm_config['llm_name']
         self.generation_params = user_config['generation_params']
+        self.instruction_prompt = user_config['instruction_prompts']['2stage_game']
         logger.info(f"Loaded (simulated) user: {self.name}")
         logger.info("-"*50)
+
+        logits_processor = OnlyABCDLogitsProcessor(self.llm.tokenizer)
+        self.logits_processor_list = LogitsProcessorList([logits_processor])
+        #pdb.set_trace()
         pass
 
     def make_initial_decision(
@@ -145,14 +166,18 @@ class User:
         task_inputs: Dict,
     ) -> str:
         choices_string = '\n'.join([str(x+'. '+y) for x, y in zip(CHOICE_LETTERS, task_inputs['choices'])])
-        input_string = "You are trying to answer a question. " \
-            + " You have to answer the question based on your own knowledge. \n\n" \
-            + f"Question: {task_inputs['question']} \nChoices: {choices_string} \n" \
-            + "What is your final answer (A, B, C or D)?\nAnswer:"
+        input_string = self.instruction_prompt['initial_guess'].replace("QUESTION", task_inputs['question']).replace("CHOICES", choices_string)
         output = self.llm.generate(input_string, **self.generation_params)
-        answer = output.split('\n')[0].split('.')[0].strip()
+        answer = output.split('\n')[0].split('.')[0].strip()[0]
         #pdb.set_trace()
+        answer_extraction_input = f"Look at the following sentence: '{output}'\n\nAnswer, using one letter only, which out of A, B, C, or D they decided on."
+        answer = self.llm.generate(answer_extraction_input, max_new_tokens=1, logits_processor=self.logits_processor_list)
         assert answer in CHOICE_LETTERS
+        #try:
+        #    assert answer in CHOICE_LETTERS
+        #except:
+        #    print(f"Output: {output}")
+        #    pdb.set_trace()
         return answer
 
     def make_decision_with_assistant_help(
@@ -162,18 +187,19 @@ class User:
         assistance: Dict
     ) -> str:
         choices_string = '\n'.join([str(x+'. '+y) for x, y in zip(CHOICE_LETTERS, task_inputs['choices'])])
-        input_string = "You are trying to answer a question. " \
-            + " You also have an AI assistant to help you answer this question. The AI assistant is not always confident in its answers. " \
-            + " You have to answer the question based on your own knowledge, as well as the AI assistant's suggestion and confidence. \n\n" \
-            + f"Question: {task_inputs['question']} \nChoices: {choices_string}\n\n" \
-            + f"Your initial answer: {initial_decision} \n\n" \
-            + f"AI assistant's answer: {assistance['predicted_answer']} \nAI assistant's confidence: {assistance['confidence']:.0%} \n\n" \
-            + "What is your final answer (A, B, C or D)?\nAnswer:"
-        output = self.llm.generate(input_string, **self.generation_params)
-        answer = output.split('\n')[0].split('.')[0].strip()
-        assert answer in CHOICE_LETTERS
+        input_string = self.instruction_prompt['final_decision'].replace("QUESTION", task_inputs['question']).replace("CHOICES", choices_string)
+        input_string = input_string.replace("INITIAL_DECISION", initial_decision)
+        input_string = input_string.replace("ASSISTANT_PREDICTION", assistance['predicted_answer']).replace("ASSISTANT_CONFIDENCE", f"{assistance['confidence']:.0%}")
+
+        generation_params = self.generation_params.copy()
+        generation_params['max_new_tokens'] = 50
+        output = self.llm.generate(input_string, **generation_params)
+        
+        answer_extraction_input = f"Look at the following sentence: '{output}'\n\nAnswer, using one letter only, which out of A, B, C, or D they decided on."
+        answer = self.llm.generate(answer_extraction_input, max_new_tokens=1, logits_processor=self.logits_processor_list)
         #pdb.set_trace()
-        return answer
+        assert answer in CHOICE_LETTERS
+        return answer, output
 
 def main():
 
@@ -213,7 +239,7 @@ def main():
             user_initial_pred = user.make_initial_decision(
                 task_inputs=d
             )
-            user_final_pred = user.make_decision_with_assistant_help(
+            user_final_pred, user_final_output = user.make_decision_with_assistant_help(
                 task_inputs=d,
                 initial_decision=user_initial_pred,
                 assistance=assistant_pred
@@ -234,6 +260,7 @@ def main():
             "true_answer": true_answer,
             "user_initial_pred": user_initial_pred,
             "user_final_pred": user_final_pred,
+            "user_final_output": user_final_output,
             "assistant_pred": assistant_pred['predicted_answer'],
             "assistant_conf": assistant_pred['confidence'],
             "assistant_is_correct": assistant_pred['is_correct'],

@@ -1,0 +1,15 @@
+assistant_name: "0.8acc_veryoverconfident"
+assistant_correctness:
+  distribution_name: "bernoulli"
+  params:
+    p: 0.8
+confidence_when_correct:
+  distribution_name: "beta"
+  params:
+    a: 10
+    b: 2
+confidence_when_incorrect:
+  distribution_name: "beta"
+  params:
+    a: 10
+    b: 2

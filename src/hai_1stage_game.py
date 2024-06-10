@@ -9,11 +9,12 @@ import logging
 import argparse
 from tqdm import tqdm
 
-import scipy
 import numpy as np
 import datasets
+from transformers import LogitsProcessorList
 
 from llm import LLM
+from utils import ConstrainedOutputLogitsProcessor
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -23,25 +24,7 @@ logging.basicConfig(
 
 CHOICE_LETTERS = ['A', 'B', 'C', 'D']
 
-def calculate_flip_rate(results: List[Dict]) -> float:
-    instances_where_assistant_and_user_initial_guess_differ = [r for r in results if not r['initial_guesses_match']]
-    flip_rate = sum([r['user_flipped'] for r in instances_where_assistant_and_user_initial_guess_differ]) / len(instances_where_assistant_and_user_initial_guess_differ)
-    return flip_rate, len(instances_where_assistant_and_user_initial_guess_differ)
 
-def calculate_switch_percentage(results: List[Dict]) -> float:
-    instances_where_assistant_and_user_initial_guess_differ = [r for r in results if not r['initial_guesses_match']]
-    switch_percentage = sum([r['final_guess_agrees_with_assistant'] for r in instances_where_assistant_and_user_initial_guess_differ]) / len(instances_where_assistant_and_user_initial_guess_differ)
-    return switch_percentage, len(instances_where_assistant_and_user_initial_guess_differ)
-
-def calculate_inappropriate_reliance(results) -> float:
-    filtered_results = [r for r in results if not r['assistant_is_correct']]
-    num_relied = len([r for r in filtered_results if r['final_guess_agrees_with_assistant']])
-    return num_relied / len(filtered_results), len(filtered_results)
-
-def calculate_appropriate_reliance(results) -> float:
-    filtered_results = [r for r in results if r['assistant_is_correct']]
-    num_relied = len([r for r in filtered_results if r['final_guess_agrees_with_assistant']])
-    return num_relied / len(filtered_results), len(filtered_results)
 
 def calculate_ece(calibration_samples: List[Dict], num_bins=10) -> float:
     bin_boundaries = np.linspace(0, 1, num_bins + 1)
@@ -125,8 +108,13 @@ class User:
     def __init__(self, user_config: Dict) -> None:
         llm_config = yaml.safe_load(open(user_config['llm_config_path']))
         self.llm = LLM(llm_config=llm_config)
-        self.name = llm_config['llm_name']
+        #self.name = llm_config['llm_name']
+        self.name = user_config['user_name']
         self.generation_params = user_config['generation_params']
+        self.instruction_prompt = user_config['instruction_prompts']['1stage_game']
+
+        logits_processor = ConstrainedOutputLogitsProcessor(self.llm.tokenizer, valid_outputs=['yes', 'no', 'Yes', 'No'])
+        self.logits_processor_list = LogitsProcessorList([logits_processor])
         logger.info(f"Loaded (simulated) user: {self.name}")
         logger.info("-"*50)
         pass
@@ -135,20 +123,29 @@ class User:
     def make_decision_with_assistant_help(
         self, 
         task_inputs: Dict,
-        assistance: Dict
+        assistance: Dict,
+        assistant: Assistant
     ) -> str:
         choices_string = '\n'.join([str(x+'. '+y) for x, y in zip(CHOICE_LETTERS, task_inputs['choices'])])
-        input_string = "You are trying to answer a question. " \
-            + " You also have an AI assistant to help you answer this question. The AI assistant is not always confident in its answers. " \
-            + " You have to answer the question based on your own knowledge, as well as the AI assistant's suggestion and confidence. \n\n" \
-            + f"Question: {task_inputs['question']} \nChoices: {choices_string}\n\n" \
-            + f"AI assistant's answer: {assistance['predicted_answer']} \nAI assistant's confidence: {assistance['confidence']:.0%} \n\n" \
-            + "Do you wish to rely on the assistant's answer? Answer either yes or no. \nAnswer:"
-        output = self.llm.generate(input_string, **self.generation_params)
-        answer = output.split('\n')[0].split('.')[0].strip().lower()
+        input_string = self.instruction_prompt.replace("QUESTION", task_inputs['question']).replace("CHOICES", choices_string)
+        input_string = input_string.replace("ASSISTANT_ACCURACY", str(int(assistant.assistant_correctness.params['p']*100)))
+        input_string = input_string.replace("ASSISTANT_PREDICTION", assistance['predicted_answer']).replace("ASSISTANT_CONFIDENCE", f"{assistance['confidence']:.0%}")
+
+        output = self.llm.generate(input_string, max_new_tokens=1, logits_processor=self.logits_processor_list)
+        #output = self.llm.generate(input_string, **self.generation_params)
+        answer = output.split('\n')[0].strip().lower()
+
+        try:
+            assert answer.startswith('yes') or answer.startswith('no')
+        except:
+            print(output)
+            pdb.set_trace()
+        #print("INPUT:")
+        #print(input_string)
+        #print("\nLLM OUTPUT:")
+        #print(output)
         #pdb.set_trace()
-        assert 'yes' in answer or 'no' in answer
-        return 1 if 'yes' in answer else 0
+        return 1 if 'yes' in answer else 0, output
 
 def main():
 
@@ -183,18 +180,20 @@ def main():
     t = tqdm(dataset)
     results = []
     for idx, d in enumerate(t):
+        #if idx >= 50:
+        #    break
         try:
             assistant_pred = assistant.get_answer(task_inputs=d)
-            user_decision = user.make_decision_with_assistant_help(
+            user_agrees_with_assistant, user_output = user.make_decision_with_assistant_help(
                 task_inputs=d,
-                assistance=assistant_pred
+                assistance=assistant_pred,
+                assistant=assistant
             )
         except Exception as e:
-            #print(e)
+            print(e)
+            pdb.set_trace()
             continue
         true_answer = CHOICE_LETTERS[d['answer']]
-
-        correct_decision = assistant_pred['is_correct']
 
         results.append({
             "idx": idx,
@@ -203,8 +202,8 @@ def main():
             "assistant_pred": assistant_pred['predicted_answer'],
             "assistant_conf": assistant_pred['confidence'],
             "assistant_is_correct": assistant_pred['is_correct'],
-            "user_decision": user_decision,
-            "correct_decision": correct_decision,
+            "user_agrees_with_assistant": user_agrees_with_assistant,
+            "user_output": user_output
         })
 
         t.set_description(f"Attempted: {idx+1}, Completed: {len(results)}")
@@ -213,51 +212,59 @@ def main():
     logger.info(f"Assistant Calibration Error: {ece:.4f}")
     logger.info("-"*100)
     
-    # Initial guess accuracy: % instances where user initial guess is correct
-    initial_user_accuracy = sum([r['initial_guess_correct'] for r in results]) / len(results)
-    logger.info(f"Initial guess accuracy of users: {initial_user_accuracy:.2%} (out of {len(results)} instances)")
-
-    # AI accuracy: % instances where AI is correct
+    # Assistant accuracy: % instances where Assistant is correct
     assistant_accuracy = sum([r['assistant_is_correct'] for r in results]) / len(results)
-    logger.info(f"AI accuracy: {assistant_accuracy:.2%} (out of {len(results)} instances)")
+    logger.info(f"Assistant accuracy: {assistant_accuracy:.2%}")
 
-    # User final accuracy: % instances where user final guess is correct
-    final_user_accuracy = sum([r['user_is_correct'] for r in results]) / len(results)
-    logger.info(f"Final guess accuracy of users: {final_user_accuracy:.2%} (out of {len(results)} instances)")
-
+    # User reliance: % instances where user agrees with Assistant
+    user_reliance = sum([r['user_agrees_with_assistant'] for r in results]) / len(results)
+    logger.info(f"User reliance: {user_reliance:.2%}")
     logger.info("-"*100)
 
-    # Flip rate: % of trials in which final user guess ≠ initial guess, out of trials where AI prediction ≠ initial user guess
-    flip_rate, num_instances = calculate_flip_rate(results)
-    logger.info(f"Flip rate: {flip_rate:.2%} (out of {num_instances} instances where AI and user initial guess differ)")
+    # Label: is the Assistant correct? (i.e. should the user rely on the Assistant?)
+    # Prediction: does the user agree with the Assistant?
+    # TP: Assistant is correct and user agrees with Assistant
+    tp = sum([r['assistant_is_correct'] and r['user_agrees_with_assistant'] for r in results])
+    # FP: Assistant is incorrect and user agrees with Assistant
+    fp = sum([not r['assistant_is_correct'] and r['user_agrees_with_assistant'] for r in results])
+    # TN: Assistant is incorrect and user disagrees with Assistant
+    tn = sum([not r['assistant_is_correct'] and not r['user_agrees_with_assistant'] for r in results])
+    # FN: Assistant is correct and user disagrees with Assistant
+    fn = sum([r['assistant_is_correct'] and not r['user_agrees_with_assistant'] for r in results])
+    logger.info(f"Instances of user correctly relying on Assistant suggestion: {tp}")
+    logger.info(f"Instances of user incorrectly relying on Assistant suggestion: {fp}")
+    logger.info(f"Instances of user correctly not relying on Assistant suggestion: {tn}")
+    logger.info(f"Instances of user incorrectly not relying on Assistant suggestion: {fn}")
+    logger.info("-"*100)
 
-    # Switch percentage: % of trials in which final user guess ==  AI prediction, out of trials where AI prediction ≠ initial user guess
-    switch_percentage, num_instances = calculate_switch_percentage(results)
-    logger.info(f"Switch percentage: {switch_percentage:.2%} (out of {num_instances} instances where AI and user initial guess differ)")
+    # Recall: tp/(tp+fn) = out of trials where Assistant is correct, % of times user agrees with Assistant
+    recall = tp / (tp + fn)
+    logger.info(f"Recall: {recall:.2%}")
 
-    # Agreement percentage: % of trials in which the participant’s final prediction agreed with the AI’s prediction (out of all trials)
-    agreement_percentage = sum([r['final_guess_agrees_with_assistant'] for r in results]) / len(results)
-    logger.info(f"Agreement percentage: {agreement_percentage:.2%} (out of {len(results)} instances)")
+    # Precision: tp/(tp+fp) = out of trials where user agrees with Assistant, % of times Assistant is correct
+    precision = tp / (tp + fp)
+    logger.info(f"Precision: {precision:.2%}")
 
-    # Appropriate reliance (recall): % of trials where AI is correct and user final guess agrees with AI, 
-    appropriate_reliance, num_assistant_correct = calculate_appropriate_reliance(results)
-    logger.info(f"Appropriate reliance: {appropriate_reliance:.2%} (out of {num_assistant_correct} instances)")
+    f1 = 2 * (precision * recall) / (precision + recall)
+    logger.info(f"F1 Score: {f1:.2f}")
 
-    # Inappropriate reliance (FPR): % of trials where AI is incorrect and user final guess agrees with assistant
-    inappropriate_reliance, num_assistant_incorrect = calculate_inappropriate_reliance(results)
-    logger.info(f"Inappropriate reliance: {inappropriate_reliance:.2%} (out of {num_assistant_incorrect} instances)")
+    # FPR: fp/(fp+tn) = out of trials where Assistant is incorrect, % of times user agrees with Assistant
+    fpr = fp / (fp + tn)
+    logger.info(f"False Positive Rate: {fpr:.2%}")
 
     results_dict = {
         "experiment_name": experiment_name,
-        "initial_user_accuracy": initial_user_accuracy,
-        "assistant_accuracy": assistant_accuracy,
-        "final_user_accuracy": final_user_accuracy,
-        "flip_rate": flip_rate,
-        "switch_percentage": switch_percentage,
-        "agreement_percentage": agreement_percentage,
-        "appropriate_reliance": appropriate_reliance,
-        "inappropriate_reliance": inappropriate_reliance, 
         "assistant_calibration_error": ece,
+        "assistant_accuracy": assistant_accuracy,
+        "user_reliance": user_reliance,
+        "recall": recall,
+        "precision": precision,
+        "f1": f1,
+        "fpr": fpr,
+        "tp": tp,
+        "fp": fp,
+        "tn": tn,
+        "fn": fn,
         "rollout_results": results,
     }
     json.dump(results_dict, open(output_file, 'w'), indent=2)

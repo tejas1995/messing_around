@@ -6,9 +6,7 @@ from typing import List, Union, Dict, Tuple
 import logging
 import itertools
 
-import scipy
 import numpy as np
-import datasets
 import torch
 import transformers
 from peft import get_peft_model, LoraConfig, TaskType, prepare_model_for_kbit_training
@@ -31,7 +29,7 @@ class LLM:
         """
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         model_load_config = llm_config['model_load_config']
-        self.translation_prompts = llm_config['translation_prompts']
+        self.use_chat_template = llm_config['use_chat_template']
         #self.generation_params = llm_config['generation_params']
 
         if model_load_config['load_in_4bit']:
@@ -55,12 +53,18 @@ class LLM:
             else:
                 self.model = transformers.AutoModelForCausalLM.from_pretrained(model_load_config['model_name_or_path']).to(self.device)
         self.tokenizer = transformers.AutoTokenizer.from_pretrained(model_load_config['tokenizer_name'])
+        if self.tokenizer.pad_token_id is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+            self.model.config.pad_token_id = self.tokenizer.pad_token_id
+            self.model.generation_config.pad_token_id = self.tokenizer.pad_token_id
+
+        self.model.eval()
 
         if model_load_config['model_name_or_path'].startswith('/'):
             logger.info(f"Loaded CausalLM model from {model_load_config['model_name_or_path']}")
         else:
             logger.info(f"Loaded pre-trained CausalLM model: {model_load_config['model_name_or_path']}")
-
 
     def generate(
         self, 
@@ -70,11 +74,24 @@ class LLM:
         """
         Generates a natural language output, given an input string.
         """
-        input_ids = self.tokenizer(input_string, return_tensors="pt").input_ids.to(self.device)
+        if self.use_chat_template:
+            messages = [{"role": "user", "content": input_string}]
+            input_ids = self.tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                padding=True,
+                return_tensors="pt"
+            ).to(self.device)
+            attention_mask = torch.ones(input_ids.shape).to(self.device)
+            #pdb.set_trace()
+        else:
+            input_ids = self.tokenizer(input_string, return_tensors="pt").input_ids.to(self.device)
+            attention_mask = torch.ones(input_ids.shape).to(self.device)
+
         try:
             sample = self.model.generate(
-            #sample = model.generate(
                 input_ids=input_ids,
+                attention_mask=attention_mask,
                 **kwargs
                 #**self.generation_params
                 #streamer=streamer
@@ -82,5 +99,4 @@ class LLM:
         except Exception as e:
             pdb.set_trace()
         output = self.tokenizer.decode(sample[0][input_ids.shape[1]:], skip_special_tokens=True)
-        #pdb.set_trace()
         return output.strip()

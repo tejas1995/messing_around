@@ -4,4 +4,4 @@ model_load_config:
   tokenizer_name: "meta-llama/Llama-2-7b-hf"
   load_in_4bit: True
   use_bfloat: True
-translation_prompts: None
+use_chat_template: False

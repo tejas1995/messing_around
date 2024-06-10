@@ -1,0 +1,13 @@
+#user_name: "llama3_8b_instruct"
+user_name: "llama3_8b_instruct-assistant_acc_aware"
+llm_config_path: "configs/llm_configs/llama3_8b_instruct.yaml"
+generation_params:
+  num_beams: 5
+  max_new_tokens: 5
+  length_penalty: -1.0
+instruction_prompts: 
+  #1stage_game: "You are trying to answer a question. You also have an AI assistant to help you answer this question. The AI assistant is not always confident in its answers. You have to answer the question based on your own knowledge, as well as the AI assistant's suggestion and confidence. \n\nQuestion: QUESTION \nChoices: CHOICES\n\nAI assistant's answer: ASSISTANT_PREDICTION \nAI assistant's confidence: ASSISTANT_CONFIDENCE \n\nDo you wish to rely on the assistant's answer? Answer either yes or no."
+  1stage_game: "You are trying to answer a question. You also have an AI assistant to help you answer this question. The AI assistant is not always confident in its answers, but typically is correct ASSISTANT_ACCURACY percent of the time. You have to answer the question based on your own knowledge, as well as the AI assistant's suggestion and confidence. \n\nQuestion: QUESTION \nChoices: CHOICES\n\nAI assistant's answer: ASSISTANT_PREDICTION \nAI assistant's confidence: ASSISTANT_CONFIDENCE \n\nDo you wish to rely on the assistant's answer? Answer either yes or no."
+  2stage_game: 
+    initial_guess: "You are trying to answer a question. You have to answer the question based on your own knowledge. \n\nQuestion: QUESTION \nChoices: CHOICES \nWhat is your final answer (your answer MUST begin with A, B, C or D)?"
+    final_decision: "You are trying to answer a question. You also have an AI assistant to help you answer this question. The AI assistant is not always confident in its answers. You have to answer the question based on your own knowledge, as well as the AI assistant's suggestion and confidence. \n\nQuestion: QUESTION \nChoices: CHOICES\n\nYour initial answer: INITIAL_DECISION \n\nAI assistant's answer: ASSISTANT_PREDICTION \nAI assistant's confidence: ASSISTANT_CONFIDENCE \n\nGiven your final answer (your answer MUST begin with A, B, C or D), followed by a brief explanation."
