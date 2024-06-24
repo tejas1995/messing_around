@@ -90,7 +90,9 @@ class Assistant:
         #    for k, v in assistant_config['confidence_when_incorrect']['params'].items():
         #        assistant_name += f"_{v}{k}"
         self.name = assistant_config['assistant_name']
-        logger.info(f"Loaded assistant: {self.name}")
+        self.confidence_expression = assistant_config['confidence_expression']
+
+        logger.info(f"Loaded assistant: {self.name} (expresses confidence using: {self.confidence_expression})")
         logger.info("-"*50)
 
     def get_answer(self, task_inputs: Dict) -> str:
@@ -102,7 +104,23 @@ class Assistant:
             answer = random.choice(CHOICE_LETTERS)            
         confidence = self.confidence_when_correct.draw_from_distribution() if is_correct \
             else self.confidence_when_incorrect.draw_from_distribution()
-        return {"predicted_answer": answer, "confidence": confidence, "is_correct": is_correct}
+
+        # Convert confidence score to a human-readable expression
+        if self.confidence_expression == "percentage":
+            expressed_confidence = f"{confidence:.0%}"
+        elif self.confidence_expression == "quintiled_linguistic":
+            expressed_confidence = "Very confident" if confidence > 0.8 else \
+                "Confident" if confidence > 0.6 else \
+                "Somewhat confident" if confidence > 0.4 else \
+                "Not very confident" if confidence > 0.2 else \
+                "Not confident at all"
+
+        return {
+            "predicted_answer": answer, 
+            "confidence": confidence, 
+            "is_correct": is_correct,
+            "expressed_confidence": expressed_confidence
+        }
 
 class User:
     def __init__(self, user_config: Dict) -> None:
@@ -129,7 +147,8 @@ class User:
         choices_string = '\n'.join([str(x+'. '+y) for x, y in zip(CHOICE_LETTERS, task_inputs['choices'])])
         input_string = self.instruction_prompt.replace("QUESTION", task_inputs['question']).replace("CHOICES", choices_string)
         input_string = input_string.replace("ASSISTANT_ACCURACY", str(int(assistant.assistant_correctness.params['p']*100)))
-        input_string = input_string.replace("ASSISTANT_PREDICTION", assistance['predicted_answer']).replace("ASSISTANT_CONFIDENCE", f"{assistance['confidence']:.0%}")
+        input_string = input_string.replace("ASSISTANT_PREDICTION", assistance['predicted_answer'])
+        input_string = input_string.replace("ASSISTANT_CONFIDENCE", assistance['expressed_confidence'])
 
         output = self.llm.generate(input_string, max_new_tokens=1, logits_processor=self.logits_processor_list)
         #output = self.llm.generate(input_string, **self.generation_params)
@@ -201,6 +220,7 @@ def main():
             "true_answer": true_answer,
             "assistant_pred": assistant_pred['predicted_answer'],
             "assistant_conf": assistant_pred['confidence'],
+            "assistant_expressed_confidence": assistant_pred['expressed_confidence'],
             "assistant_is_correct": assistant_pred['is_correct'],
             "user_agrees_with_assistant": user_agrees_with_assistant,
             "user_output": user_output

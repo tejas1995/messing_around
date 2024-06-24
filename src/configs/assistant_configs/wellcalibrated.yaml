@@ -1,8 +1,8 @@
-assistant_name: "0.8acc_overconfident"
+assistant_name: "0.5acc_wellcalibrated"
 assistant_correctness:
   distribution_name: "bernoulli"
   params:
-    p: 0.8
+    p: 0.5
 confidence_when_correct:
   distribution_name: "beta"
   params:
@@ -11,5 +11,6 @@ confidence_when_correct:
 confidence_when_incorrect:
   distribution_name: "beta"
   params:
-    a: 4
-    b: 2
+    a: 2
+    b: 6
+confidence_expression: "percentage"

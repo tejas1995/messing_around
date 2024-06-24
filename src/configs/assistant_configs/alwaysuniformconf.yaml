@@ -1,8 +1,10 @@
-assistant_name: "0.7acc_alwaysuniformconf"
+assistant_name: "0.8acc_alwaysuniformconf_linguisticexpression"
+
 assistant_correctness:
   distribution_name: "bernoulli"
   params:
-    p: 0.7
+    p: 0.8
+
 confidence_when_correct:
   distribution_name: "uniform"
   params:
@@ -13,3 +15,5 @@ confidence_when_incorrect:
   params:
     low: 0.0
     high: 1.0
+
+confidence_expression: "quintiled_linguistic"   # "percentage" or "quintiled_linguistic"
