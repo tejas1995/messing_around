@@ -1,0 +1,8 @@
+assistant_name: "llama3_8b_instruct-token_prob_conf"
+
+llm_config_path: "configs/llm_configs/llama3_8b_instruct.yaml"
+
+confidence_method: "token_prob"
+
+answer_prediction_prompt:
+  "Answer the following question by selecting one of the choices (A, B, C, D). \n\nQuestion: QUESTION\nChoices: CHOICES\n\nWhat is your final answer (A, B, C or D)?\n\nAnswer:"

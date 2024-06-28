@@ -1,5 +1,5 @@
-assistant_name: "0.5acc_alwaysuniformconf_numeric"
-#assistant_name: "0.8acc_alwaysuniformconf_quintiledlinguistic"
+assistant_name: "0.5acc_uniformconf"
+#assistant_name: "0.5acc_alwaysuniformconf_quintiledlinguistic"
 #assistant_name: "0.5acc_alwaysuniformconf_humanreadablestatement"
 
 assistant_correctness:

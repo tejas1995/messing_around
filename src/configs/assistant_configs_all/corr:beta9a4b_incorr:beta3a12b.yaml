@@ -1,4 +1,4 @@
-assistant_name: "0.5acc_veryoverconfident"
+assistant_name: "0.5acc_corr:beta9a4b_incorr:beta3a12b"
 assistant_correctness:
   distribution_name: "bernoulli"
   params:
@@ -6,11 +6,11 @@ assistant_correctness:
 confidence_when_correct:
   distribution_name: "beta"
   params:
-    a: 10
-    b: 2
+    a: 9
+    b: 4
 confidence_when_incorrect:
   distribution_name: "beta"
   params:
-    a: 10
-    b: 2
+    a: 3
+    b: 12
 confidence_expression: "percentage"

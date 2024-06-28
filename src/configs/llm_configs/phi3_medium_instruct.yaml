@@ -1,0 +1,7 @@
+llm_name: "phi3_medium_instruct"
+model_load_config:
+  model_name_or_path: "microsoft/Phi-3-medium-4k-instruct"
+  tokenizer_name: "microsoft/Phi-3-medium-4k-instruct"
+  load_in_4bit: True
+  use_bfloat: True
+use_chat_template: True

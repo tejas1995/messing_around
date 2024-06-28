@@ -1,7 +1,7 @@
-user_name: "mistral_7b_instruct"
-#user_name: "mistral_7b_instruct-assistant_acc_aware"
+user_name: "phi3_medium_instruct"
+#user_name: "phi3_medium_instruct-assistant_acc_aware"
 
-llm_config_path: "configs/llm_configs/mistral_7b_instruct.yaml"
+llm_config_path: "configs/llm_configs/phi3_medium_instruct.yaml"
 
 generation_params:
   num_beams: 5

@@ -15,15 +15,13 @@ from transformers import LogitsProcessorList
 
 from llm import LLM
 from utils import ConstrainedOutputLogitsProcessor
+from data import DATASET_CLASS_MAP
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
         format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
         datefmt='%m/%d/%Y %H:%M:%S',
         level=logging.INFO)
-
-CHOICE_LETTERS = ['A', 'B', 'C', 'D']
-
 
 
 def calculate_ece(calibration_samples: List[Dict], num_bins=10) -> float:
@@ -80,15 +78,12 @@ class Assistant:
         self.confidence_when_incorrect = ProbabilityDistribution(
             prob_distribution_config=assistant_config['confidence_when_incorrect']
         )
-        #assistant_name = f"{assistant_config['assistant_correctness']['params']['p']}accuracy"
-        #assistant_name += f"-correctconf_{assistant_config['confidence_when_correct']['distribution_name']}"
-        #if assistant_config['confidence_when_correct']['distribution_name'] not in ['uniform', 'normal']:
-        #    for k, v in assistant_config['confidence_when_correct']['params'].items():
-        #        assistant_name += f"_{v}{k}"
-        #assistant_name += f"-incorrectconf_{assistant_config['confidence_when_incorrect']['distribution_name']}"
-        #if assistant_config['confidence_when_incorrect']['distribution_name'] not in ['uniform', 'normal']:
-        #    for k, v in assistant_config['confidence_when_incorrect']['params'].items():
-        #        assistant_name += f"_{v}{k}"
+
+        if 'llm' in assistant_config:
+            llm_config = yaml.safe_load(open(assistant_config['llm']['llm_config_path']))
+            self.llm = LLM(llm_config=llm_config)
+            self.llm_generation_params = assistant_config['llm']['generation_params']
+
         self.name = assistant_config['assistant_name']
         self.confidence_expression = assistant_config['confidence_expression']
 
@@ -98,28 +93,42 @@ class Assistant:
     def get_answer(self, task_inputs: Dict) -> str:
         is_correct = self.assistant_correctness.draw_from_distribution()
         if task_inputs != {}:
-            answer_idx = task_inputs['answer'] if is_correct else random.choice([i for i in range(len(task_inputs['choices'])) if i != task_inputs['answer']])
-            answer = CHOICE_LETTERS[answer_idx]
+            answer = task_inputs['correct_answer']
         else:
-            answer = random.choice(CHOICE_LETTERS)            
+            answer = random.choice(task_inputs['incorrect_answers'])            
         confidence = self.confidence_when_correct.draw_from_distribution() if is_correct \
             else self.confidence_when_incorrect.draw_from_distribution()
 
         # Convert confidence score to a human-readable expression
         if self.confidence_expression == "percentage":
             expressed_confidence = f"{confidence:.0%}"
+            assistant_prediction_string = f"Prediction: {answer}, confidence: {expressed_confidence}"
+
         elif self.confidence_expression == "quintiled_linguistic":
             expressed_confidence = "Very confident" if confidence > 0.8 else \
                 "Confident" if confidence > 0.6 else \
                 "Somewhat confident" if confidence > 0.4 else \
                 "Not very confident" if confidence > 0.2 else \
                 "Not confident at all"
+            assistant_prediction_string = f"Prediction: {answer}, confidence: {expressed_confidence}"
+
+        elif self.confidence_expression == "human_readable_linguistic_expression":
+            prompt = f"""You are helping a user with a task. You have made a prediction with some confidence level, and you need to translate that confidence level into a human-readable expression. Generate a one-sentence statement that conveys both your prediction and your confidence level, but without using any numbers.
+            Prediction: {answer}
+            Confidence: {confidence:.0%}
+
+            Human-readable expression of confidence:"""
+            assistant_prediction_string = self.llm.generate(input_string=prompt, **self.llm_generation_params)
+            assistant_prediction_string = assistant_prediction_string.split('\n')[0]
+            expressed_confidence = assistant_prediction_string
+            #pdb.set_trace()
 
         return {
             "predicted_answer": answer, 
             "confidence": confidence, 
             "is_correct": is_correct,
-            "expressed_confidence": expressed_confidence
+            "expressed_confidence": expressed_confidence, 
+            "assistant_prediction_string": assistant_prediction_string
         }
 
 class User:
@@ -144,11 +153,10 @@ class User:
         assistance: Dict,
         assistant: Assistant
     ) -> str:
-        choices_string = '\n'.join([str(x+'. '+y) for x, y in zip(CHOICE_LETTERS, task_inputs['choices'])])
-        input_string = self.instruction_prompt.replace("QUESTION", task_inputs['question']).replace("CHOICES", choices_string)
+        input_string = self.instruction_prompt.replace("QUESTION", task_inputs['question']).replace("CHOICES", task_inputs['choices_string'])
         input_string = input_string.replace("ASSISTANT_ACCURACY", str(int(assistant.assistant_correctness.params['p']*100)))
-        input_string = input_string.replace("ASSISTANT_PREDICTION", assistance['predicted_answer'])
-        input_string = input_string.replace("ASSISTANT_CONFIDENCE", assistance['expressed_confidence'])
+        input_string = input_string.replace("ASSISTANT_PREDICTION", assistance['assistant_prediction_string'])
+        #input_string = input_string.replace("ASSISTANT_CONFIDENCE", assistance['expressed_confidence'])
 
         output = self.llm.generate(input_string, max_new_tokens=1, logits_processor=self.logits_processor_list)
         #output = self.llm.generate(input_string, **self.generation_params)
@@ -171,7 +179,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--user_config", type=str, default='configs/game.yaml')
     parser.add_argument("--assistant_config", type=str, default='configs/')
-    parser.add_argument("--output_dir", type=str, default='/home/tejas/experiments/hai_game/1stage_game/')
+    parser.add_argument("--dataset", type=str, choices=list(DATASET_CLASS_MAP.keys()))
+    parser.add_argument("--output_dir", type=str, default='/home/tejas/experiments/FAFO/hai_game/1stage_game/')
     args = parser.parse_args()
 
     user_config = yaml.safe_load(open(args.user_config))
@@ -179,9 +188,10 @@ def main():
     assistant_config = yaml.safe_load(open(args.assistant_config))
     assistant = Assistant(assistant_config)
 
-    dataset = datasets.load_dataset("lighteval/mmlu", 'clinical_knowledge', split='test')
+    dataset_class = DATASET_CLASS_MAP[args.dataset]
+    dataset = dataset_class()
 
-    experiment_name = f"dataset-mmlu_clinical/simulated_user-{user.name}/assistant-{assistant.name}"
+    experiment_name = f"dataset-{args.dataset}/simulated_user-{user.name}/assistant-{assistant.name}"
     output_file = os.path.join(args.output_dir, f"{experiment_name}.json")
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     logger.info(f"Output file: {output_file}")
@@ -212,7 +222,7 @@ def main():
             print(e)
             pdb.set_trace()
             continue
-        true_answer = CHOICE_LETTERS[d['answer']]
+        true_answer = d['correct_answer']
 
         results.append({
             "idx": idx,
@@ -221,6 +231,7 @@ def main():
             "assistant_pred": assistant_pred['predicted_answer'],
             "assistant_conf": assistant_pred['confidence'],
             "assistant_expressed_confidence": assistant_pred['expressed_confidence'],
+            "assistant_prediction_string": assistant_pred['assistant_prediction_string'],
             "assistant_is_correct": assistant_pred['is_correct'],
             "user_agrees_with_assistant": user_agrees_with_assistant,
             "user_output": user_output
